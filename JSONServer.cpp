@@ -15,12 +15,279 @@ http://www.binarii.com/files/papers/c_sockets.txt
 #include <errno.h>
 #include <string>
 #include <iostream>
-#include <pthread>
+#include <pthread.h>
+#include <string>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <string.h>
+#include <termios.h>
+
+#include <thread>         
+#include <mutex>
+#include <sstream>
+
+#include <queue>
+
 using namespace std;
+ 
 
-int start_server(int PORT_NUMBER)
-{
+bool isRunning = true;    // if the server should be running
+bool isF = false;         // if the current unit is Fahrenheit
+int isConnect = 1;    // 1 means the server is connected to Arduino, 0 otherwise
+int consecutiveFailedReadings = 0; 
 
+deque<double> temp;       // temperature deque
+double low = 100;         // lowest temp
+double high = -10;        // highest temp
+mutex mtx;                // a lock
+
+
+
+void* user_input(void *arg){      // waiting for input and after getting input kill the server
+
+  int j = 0;
+
+  string input; 
+  while(true){
+    getline(cin, input);
+    if (input == "q") {     // if the input is q, close the server
+      isRunning = false;    // set isRunning to false to end the server
+    }
+  }
+
+  return NULL;
+}
+
+void configure(int fd) {      // configure the USB port
+  struct  termios pts;
+  tcgetattr(fd, &pts);
+  cfsetospeed(&pts, 9600);   
+  cfsetispeed(&pts, 9600);   
+  tcsetattr(fd, TCSANOW, &pts);
+}
+
+void* readUSB(void *arg){       // read from Arduino 
+  char* file_name = (char*)(arg);
+
+  int fd = open(file_name, O_RDWR | O_NOCTTY | O_NDELAY);
+  
+  if (fd < 0) {
+    perror("Could not open file");
+    exit(1);
+  }
+  else {
+    cout << "Successfully opened " << file_name << " for reading/writing" << endl;
+  }
+
+  configure(fd);
+
+  while (true){       // keep looping
+      cout << "hahah1" << endl;
+      char buffer[100];
+      int bytes_read = read(fd, buffer, 99);
+      if (bytes_read == 0) {
+        //consecutiveFailedReadings++;
+        //if (consecutiveFailedReadings == 3){
+          //isConnect = 0;
+        //}
+        continue;
+      }
+
+      cout << "hahah2" << endl;
+
+      string str = "";
+
+      while (buffer[bytes_read - 1] != '\n'){     // handle incomplete msg, keep reading until a null terminator is met.
+        buffer[bytes_read] = '\0';
+        str += buffer;
+        
+        for (int i = 0; i < 100; i++){
+          buffer[i] = '\0';
+        }
+
+        bytes_read = read(fd, buffer, 99);  
+      }
+
+      cout << "hahah3" << endl;
+      
+      str += buffer;
+
+      cout << str << endl;
+
+      for (int i = 0; i < 100; i++){
+        buffer[i] = '\0';
+      } 
+
+      cout << "hahah4" << endl;
+
+      if (str.size() >= 26){        // the module that reads in data and push to queue
+        consecutiveFailedReadings = 0;
+        isConnect = 1;
+
+        string test = str.substr(19, 7);
+        double t = atof(test.c_str());
+
+        if (t > high) high = t;
+        if (t < low) low = t;
+
+        if (temp.size() < 3600){    // if the size is equal or less than 3600
+            temp.push_back(t);
+        } else {
+            temp.pop_front();
+            temp.push_back(t);
+        }
+      } else {
+        consecutiveFailedReadings++;
+      }
+
+      cout << "hahah5" << endl;
+      if (str == ""){
+        consecutiveFailedReadings++;
+        continue;
+      } else {
+        consecutiveFailedReadings = 0;
+        cout << str << endl;
+      }
+    }
+}
+
+int requestHandler(char request[]){   // 0 for stats, 1 for F,C switch, 3 for standby, 4 for resume
+    string tmp = "";
+    int i = 0;
+    while(request[i] != '\0'){
+      tmp += request[i];
+      i++;
+    }
+
+    int index = tmp.find("/595/");      
+    string relativePath = tmp.substr(index+5, 1);     // get the code for the operation
+    cout << "relativePath is " + relativePath << endl;  
+
+    if (relativePath == "0") return 0;
+    if (relativePath == "1") {
+    	return 1;
+    }
+    if (relativePath == "3") return 3;
+    if (relativePath == "4") return 4;
+    if (relativePath == "q") return 10;
+    return -1;
+}
+
+string DtoS(double t){
+    string ret = to_string(t).substr(0, 5);
+    return ret;
+}
+
+void statsHandler(int fd){          // send stats to the pebble
+    cout << "stats" << endl;
+
+    deque<double>::iterator itr;
+    double sum = 0;
+    int count = 0;
+    for (itr = temp.begin(); itr != temp.end(); itr++){     // calculate avg
+        count++;
+        sum += (*itr);
+    }
+    double avg = sum / count;
+
+    mtx.lock();
+    double recent = temp.back();    // the most recent reading
+    mtx.unlock();
+
+
+    if (!isF){
+    	string reply = "{\n\"low\": \"" + DtoS(low) + "C\", \"high\": \"" + DtoS(high) + "C\", \"avg\": \"" + DtoS(avg) + "C\", \"recent\": \"" + DtoS(recent) + "C\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
+    
+    	send(fd, reply.c_str(), reply.length(), 0);
+    } else {
+    	string reply = "{\n\"low\": \"" + DtoS(low * 1.8 + 32) + "F\", \"high\": \"" + DtoS(high * 1.8 + 32) + "F\", \"avg\": \"" + DtoS(avg * 1.8 + 32) + "F\", \"recent\": \"" + DtoS(recent * 1.8 + 32) + "F\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
+    
+    	send(fd, reply.c_str(), reply.length(), 0);
+    }
+    close(fd);
+}
+
+void FCHandler(int fd){     // handle FC switch
+	isF = !isF;
+	cout << "FCHandler" << endl;
+
+
+    deque<double>::iterator itr;
+    double sum = 0;
+    int count = 0;
+    for (itr = temp.begin(); itr != temp.end(); itr++){
+        count++;
+        sum += (*itr);
+    }
+    double avg = sum / count;
+
+    mtx.lock();
+    double recent = temp.back();
+    mtx.unlock();
+
+    if (!isF){
+    	string reply = "{\n\"low\": \"" + DtoS(low) + "C\", \"high\": \"" + DtoS(high) + "C\", \"avg\": \"" + DtoS(avg) + "C\", \"recent\": \"" + DtoS(recent) + "C\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
+    
+    	send(fd, reply.c_str(), reply.length(), 0);
+    } else {
+    	string reply = "{\n\"low\": \"" + DtoS(low * 1.8 + 32) + "F\", \"high\": \"" + DtoS(high * 1.8 + 32) + "F\", \"avg\": \"" + DtoS(avg * 1.8 + 32) + "F\", \"recent\": \"" + DtoS(recent * 1.8 + 32) + "F\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
+    
+    	send(fd, reply.c_str(), reply.length(), 0);
+    }
+    close(fd);
+}
+
+
+void StandbyHandler(int fd){      // handles standby
+    cout << "standby" << endl;
+
+    string reply = "{\n\"name\": \"GCF\"\n}\n";
+    
+    send(fd, reply.c_str(), reply.length(), 0);
+    close(fd);
+
+
+    
+
+
+
+
+}
+
+
+void ResumeHandler(int fd){       // handles resume
+    cout << "resume" << endl;
+
+    string reply = "{\n\"name\": \"GCF\"\n}\n";
+    
+    send(fd, reply.c_str(), reply.length(), 0);
+    close(fd);
+}
+
+
+
+int start_server(int PORT_NUMBER)     // start the server and listening to requests
+{ 
+    /*
+	  temp.push_back(10);
+	  temp.push_back(20);
+	  temp.push_back(10);
+	  temp.push_back(20);
+	  temp.push_back(10);
+	  temp.push_back(20);
+	  temp.push_back(10);
+	  temp.push_back(20);
+	  temp.push_back(10);
+	  temp.push_back(20);
+    temp.push_back(0);
+    temp.push_back(30);
+    temp.push_back(15);
+    temp.push_back(15);
+    temp.push_back(15);
+    */
+    
       // structs to represent the server and client
       struct sockaddr_in server_addr,client_addr;    
       
@@ -61,7 +328,7 @@ int start_server(int PORT_NUMBER)
       fflush(stdout);
      
 
-     while (1){
+     while (isRunning){
 
       // 4. accept: wait here until we get a connection on that port
       int sin_size = sizeof(struct sockaddr_in);
@@ -77,26 +344,23 @@ int start_server(int PORT_NUMBER)
       request[bytes_received] = '\0';
       cout << "Here comes the message:" << endl;
       cout << request << endl;
-
-
       
-      // this is the message that we'll send back
-      /* it actually looks like this:
-        {
-           "name": "cit595"
-        }
-      */
-      string reply = "{\n\"name\": \"GCF\"\n}\n";
-      
-      // 6. send: send the message over the socket
-      // note that the second argument is a char*, and the third is the number of chars
-      send(fd, reply.c_str(), reply.length(), 0);
-      //printf("Server sent message: %s\n", reply);
 
+      int ret = requestHandler(request);
 
+      cout << "ret is " << ret << endl;
 
-      // 7. close: close the socket connection
-      close(fd);
+      if (ret == 0){
+          statsHandler(fd);
+      } else if (ret == 1){
+          FCHandler(fd);
+      } else if (ret == 3){
+          StandbyHandler(fd);
+      } else if (ret == 4){
+          ResumeHandler(fd);
+      } else if (ret == 10){
+      	  break;
+      }
 
 
     }
@@ -111,15 +375,27 @@ int start_server(int PORT_NUMBER)
 int main(int argc, char *argv[])
 {
   // check the number of arguments
-  if (argc != 2)
+  if (argc != 3)
     {
-      cout << endl << "Usage: server [port_number]" << endl;
+      cout << endl << "Usage: server [port_number] [serial_port USB]" << endl;
       exit(0);
     }
 
   int PORT_NUMBER = atoi(argv[1]);
+  char* file_name = argv[2];
 
-  pthread 
-  start_server(PORT_NUMBER);
+  pthread_t tid_typing;
+  if (pthread_create(&tid_typing, NULL, user_input, NULL) != 0) {     // create the thread for listening user input
+        perror("pthread_create");
+        exit(1);
+  }
+
+  pthread_t tid_USB;
+  if (pthread_create(&tid_USB, NULL, readUSB, file_name) != 0) {      // create the thread for reading USB input
+        perror("pthread_create");
+        exit(1);
+  }
+
+  start_server(PORT_NUMBER);      //start the server
 }
 
