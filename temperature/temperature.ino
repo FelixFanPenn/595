@@ -37,6 +37,7 @@ const byte NumberLookup[16] =   {0x3F,0x06,0x5B,0x4F,0x66,
 
 /* Function prototypes */
 void Cal_temp (int&, byte&, byte&, bool&);
+void Fah_temp (int& FDecimal, byte& FHigh, bool& Fsign, int CDecimal, byte CHigh, bool Csign);
 void Dis_7SEG (int, byte, byte, bool);
 void Send7SEG (byte, byte);
 void SerialMonitorPrint (byte, int, bool);
@@ -68,9 +69,9 @@ void setup()
  
 void loop() 
 { 
-  int Decimal;
-  byte Temperature_H, Temperature_L, counter, counter2;
-  bool IsPositive;
+  int Decimal, FDecimal = 0, timeInterval = 1000;
+  byte Temperature_H, Temperature_L, FTemperature_H = 0, FTemperature_L = 0, counter, counter2;
+  bool IsPositive, FIsPositive = 0, isCel = 1;
   
   /* Configure 7-Segment to 12mA segment output current, Dynamic mode, 
      and Digits 1, 2, 3 AND 4 are NOT blanked */
@@ -119,16 +120,14 @@ void loop()
     
     /* Calculate temperature */
     Cal_temp (Decimal, Temperature_H, Temperature_L, IsPositive);
-    
-    /* Display temperature on the serial monitor. 
-       Comment out this line if you don't use serial monitor.*/
-    SerialMonitorPrint (Temperature_H, Decimal, IsPositive);
-    
-    /* Update RGB LED.*/
-    UpdateRGB (Temperature_H);
-    
-    /* Display temperature on the 7-Segment */
-    Dis_7SEG (Decimal, Temperature_H, Temperature_L, IsPositive);
+
+    /* display the temperature with respect to isCel variable*/
+    if (isCel == 1){
+        Dis_7SEG (Decimal, Temperature_H, Temperature_L, IsPositive, 1);
+    }else{
+        Fah_temp (FDecimal, FTemperature_H, FIsPositive, Decimal, Temperature_H, IsPositive);
+        Dis_7SEG (FDecimal, FTemperature_H, FTemperature_L, FIsPositive, 0);
+    }
     
     delay (1000);        /* Take temperature read every 1 second */
   }
@@ -161,12 +160,31 @@ void Cal_temp (int& Decimal, byte& High, byte& Low, bool& sign)
 }
 
 /***************************************************************************
+ Function Name: Fah_temp
+
+ Purpose: 
+   convert the Celsius temperature to Farenheit
+****************************************************************************/
+void Fah_temp (int& FDecimal, byte& FHigh, bool& Fsign, int CDecimal, byte CHigh, bool Csign)
+{
+  double Celsius, Fahrenheit;
+  Celsius = CHigh + CDecimal / 1000;
+  //change Celsius to positive value
+  Celsius = Csign == 0? -Celsius : Celsius;
+  Fahrenheit = Celsius * 9.0 / 5.0 + 32.0;
+  //update the Fsign 0: neg 1: pos
+  Fsign = Fahrenheit < 0? 0 : 1; 
+  FHigh = (int) Fahrenheit;
+  FDecimal = (int) ((Fahrenheit - FHigh) * 1000);
+}
+
+/***************************************************************************
  Function Name: Dis_7SEG
 
  Purpose: 
    Display number on the 7-segment display.
 ****************************************************************************/
-void Dis_7SEG (int Decimal, byte High, byte Low, bool sign)
+void Dis_7SEG (int Decimal, byte High, byte Low, bool sign, bool isCel)
 {
   byte Digit = 4;                 /* Number of 7-Segment digit */
   byte Number;                    /* Temporary variable hold the number to display */
@@ -210,9 +228,15 @@ void Dis_7SEG (int Decimal, byte High, byte Low, bool sign)
   }
 
   if (Digit > 0)                 /* Display "c" if there is more space on 7-SEG */
-  {
-    Send7SEG (Digit,0x58);
-    Digit--;
+  { 
+    //Display c in Celsius and f in Farenheit
+    if (isCel){
+      Send7SEG (Digit,0x58);
+    }
+    else{
+      Send7SEG (Digit, 0x71);
+    }
+       Digit--;
   }
   
   if (Digit > 0)                 /* Clear the rest of the digit */
@@ -283,5 +307,6 @@ void SerialMonitorPrint (byte Temperature_H, int Decimal, bool IsPositive)
     Serial.print("\n\n");
 }
     
+
 
 
