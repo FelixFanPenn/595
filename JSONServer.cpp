@@ -38,6 +38,9 @@ bool isF = false;         // if the current unit is Fahrenheit
 int isConnect = 1;    // 1 means the server is connected to Arduino, 0 otherwise
 int consecutiveFailedReadings = 0; 
 
+int fd_a;
+int fd_p;
+
 deque<double> temp;       // temperature deque
 double low = 100;         // lowest temp
 double high = -10;        // highest temp
@@ -71,9 +74,11 @@ void configure(int fd) {      // configure the USB port
 void* readUSB(void *arg){       // read from Arduino 
   char* file_name = (char*)(arg);
 
-  int fd = open(file_name, O_RDWR | O_NOCTTY | O_NDELAY);
+
+
+  fd_a = open(file_name, O_RDWR | O_NOCTTY | O_NDELAY);
   
-  if (fd < 0) {
+  if (fd_a < 0) {
     perror("Could not open file");
     exit(1);
   }
@@ -81,48 +86,33 @@ void* readUSB(void *arg){       // read from Arduino
     cout << "Successfully opened " << file_name << " for reading/writing" << endl;
   }
 
-  configure(fd);
+  configure(fd_a);
 
+  int i = 0;
   while (true){       // keep looping
-      cout << "hahah1" << endl;
-      char buffer[100];
-      int bytes_read = read(fd, buffer, 99);
-      if (bytes_read == 0) {
-        //consecutiveFailedReadings++;
-        //if (consecutiveFailedReadings == 3){
-          //isConnect = 0;
-        //}
-        continue;
-      }
 
-      cout << "hahah2" << endl;
+      i++;
+      //cout << "hahah1" << endl;
+      char buffer[100];
+      int bytes_read = read(fd_a, buffer, 99);
+      /*
+      cout << bytes_read << endl;
+      cout << buffer << endl;
 
       string str = "";
-
-      while (buffer[bytes_read - 1] != '\n'){     // handle incomplete msg, keep reading until a null terminator is met.
-        buffer[bytes_read] = '\0';
-        str += buffer;
-        
+      str += buffer;
+      if (str.size() < 25) {
         for (int i = 0; i < 100; i++){
           buffer[i] = '\0';
         }
-
-        bytes_read = read(fd, buffer, 99);  
+        continue;
       }
+      else {
+        for (int i = 0; i < 100; i++){
+          buffer[i] = '\0';
+        } 
 
-      cout << "hahah3" << endl;
-      
-      str += buffer;
-
-      cout << str << endl;
-
-      for (int i = 0; i < 100; i++){
-        buffer[i] = '\0';
-      } 
-
-      cout << "hahah4" << endl;
-
-      if (str.size() >= 26){        // the module that reads in data and push to queue
+        if (str.size() >= 26){        // the module that reads in data and push to queue
         consecutiveFailedReadings = 0;
         isConnect = 1;
 
@@ -141,15 +131,82 @@ void* readUSB(void *arg){       // read from Arduino
       } else {
         consecutiveFailedReadings++;
       }
+      }
+      cout << buffer << endl;
+      */
 
-      cout << "hahah5" << endl;
+      
+      if (bytes_read == 0) {
+        continue;
+      } 
+      
+
+     // cout << "hahah2" << endl;
+
+      
+      string str = "";
+
+      int tmp = bytes_read;
+      while (buffer[bytes_read - 1] != '\n'){     // handle incomplete msg, keep reading until a null terminator is met.
+        buffer[bytes_read] = '\0';
+        str += buffer;
+        
+        for (int i = 0; i < 100; i++){
+          buffer[i] = '\0';
+        }
+
+        bytes_read = read(fd_a, buffer, 99);  
+        if (bytes_read == -1){
+          bytes_read = tmp;
+        } else {
+          tmp = bytes_read;
+        }
+      }
+
+      //cout << "hahah3" << endl;
+      
+      str += buffer;
+
+      cout << str << endl;
+
+      for (int i = 0; i < 100; i++){
+        buffer[i] = '\0';
+      } 
+
+      //cout << "hahah4" << endl;
+
+      if (str.size() >= 26){        // the module that reads in data and push to queue
+
+        //isConnect = 1;
+
+        string test = str.substr(19, 7);
+        double t = atof(test.c_str());
+
+        if (t > high && t < 50) high = t;
+        if (t < low && t > 0) low = t;
+
+        if (t > 50 || t < 10){
+            continue;
+        }
+
+        if (temp.size() < 3600){    // if the size is equal or less than 3600
+            cout << t << endl;
+            temp.push_back(t);
+        } else {
+            temp.pop_front();
+            cout << t << endl;
+            temp.push_back(t);
+        }
+      } 
+
+      //cout << "hahah5" << endl;
       if (str == ""){
-        consecutiveFailedReadings++;
         continue;
       } else {
-        consecutiveFailedReadings = 0;
-        cout << str << endl;
+        
+       // cout << str << endl;
       }
+      
     }
 }
 
@@ -164,6 +221,34 @@ int requestHandler(char request[]){   // 0 for stats, 1 for F,C switch, 3 for st
     int index = tmp.find("/595/");      
     string relativePath = tmp.substr(index+5, 1);     // get the code for the operation
     cout << "relativePath is " + relativePath << endl;  
+
+
+    int Arduino = 0;
+
+
+
+
+
+    ///// FC or error
+
+    /*
+    char* ddd = "ddd";
+    Arduino = write(fd_a, ddd, 3);
+    cout << "Arduino IS " << Arduino << endl;
+    if (Arduino < 0) {
+      isConnect = 0;
+      cout << "||||||||||||||||||||" << endl;
+    }
+    else {
+      isConnect = 1;
+    }
+    */
+    
+
+
+
+
+
 
     if (relativePath == "0") return 0;
     if (relativePath == "1") {
@@ -199,11 +284,11 @@ void statsHandler(int fd){          // send stats to the pebble
 
     if (!isF){
     	string reply = "{\n\"low\": \"" + DtoS(low) + "C\", \"high\": \"" + DtoS(high) + "C\", \"avg\": \"" + DtoS(avg) + "C\", \"recent\": \"" + DtoS(recent) + "C\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
-    
+      cout << reply << endl;
     	send(fd, reply.c_str(), reply.length(), 0);
     } else {
     	string reply = "{\n\"low\": \"" + DtoS(low * 1.8 + 32) + "F\", \"high\": \"" + DtoS(high * 1.8 + 32) + "F\", \"avg\": \"" + DtoS(avg * 1.8 + 32) + "F\", \"recent\": \"" + DtoS(recent * 1.8 + 32) + "F\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
-    
+      cout << reply << endl;
     	send(fd, reply.c_str(), reply.length(), 0);
     }
     close(fd);
@@ -229,30 +314,57 @@ void FCHandler(int fd){     // handle FC switch
 
     if (!isF){
     	string reply = "{\n\"low\": \"" + DtoS(low) + "C\", \"high\": \"" + DtoS(high) + "C\", \"avg\": \"" + DtoS(avg) + "C\", \"recent\": \"" + DtoS(recent) + "C\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
-    
+      cout << reply << endl;
     	send(fd, reply.c_str(), reply.length(), 0);
     } else {
     	string reply = "{\n\"low\": \"" + DtoS(low * 1.8 + 32) + "F\", \"high\": \"" + DtoS(high * 1.8 + 32) + "F\", \"avg\": \"" + DtoS(avg * 1.8 + 32) + "F\", \"recent\": \"" + DtoS(recent * 1.8 + 32) + "F\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
-    
+      cout << reply << endl;
     	send(fd, reply.c_str(), reply.length(), 0);
     }
     close(fd);
+
+    if (isF){
+      char* res = "f";
+
+      write(fd_a, res, 10);
+    } else {
+      char* res = "c";
+
+      write(fd_a, res, 10);
+    }
+
 }
 
 
 void StandbyHandler(int fd){      // handles standby
     cout << "standby" << endl;
 
-    string reply = "{\n\"name\": \"GCF\"\n}\n";
-    
-    send(fd, reply.c_str(), reply.length(), 0);
+    deque<double>::iterator itr;
+    double sum = 0;
+    int count = 0;
+    for (itr = temp.begin(); itr != temp.end(); itr++){
+        count++;
+        sum += (*itr);
+    }
+    double avg = sum / count;
+
+    mtx.lock();
+    double recent = temp.back();
+    mtx.unlock();
+
+    if (!isF){
+      string reply = "{\n\"low\": \"" + DtoS(low) + "C\", \"high\": \"" + DtoS(high) + "C\", \"avg\": \"" + DtoS(avg) + "C\", \"recent\": \"" + DtoS(recent) + "C\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
+      cout << reply << endl;
+      send(fd, reply.c_str(), reply.length(), 0);
+    } else {
+      string reply = "{\n\"low\": \"" + DtoS(low * 1.8 + 32) + "F\", \"high\": \"" + DtoS(high * 1.8 + 32) + "F\", \"avg\": \"" + DtoS(avg * 1.8 + 32) + "F\", \"recent\": \"" + DtoS(recent * 1.8 + 32) + "F\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
+      cout << reply << endl;
+      send(fd, reply.c_str(), reply.length(), 0);
+    }
     close(fd);
 
-
-    
-
-
-
+    char* res = "s";
+    write(fd_a, res, 10);
 
 }
 
@@ -260,33 +372,42 @@ void StandbyHandler(int fd){      // handles standby
 void ResumeHandler(int fd){       // handles resume
     cout << "resume" << endl;
 
-    string reply = "{\n\"name\": \"GCF\"\n}\n";
+    deque<double>::iterator itr;
+    double sum = 0;
+    int count = 0;
+    for (itr = temp.begin(); itr != temp.end(); itr++){
+        count++;
+        sum += (*itr);
+    }
+    double avg = sum / count;
+
+    mtx.lock();
+    double recent = temp.back();
+    mtx.unlock();
+
+    if (!isF){
+      string reply = "{\n\"low\": \"" + DtoS(low) + "C\", \"high\": \"" + DtoS(high) + "C\", \"avg\": \"" + DtoS(avg) + "C\", \"recent\": \"" + DtoS(recent) + "C\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
     
-    send(fd, reply.c_str(), reply.length(), 0);
+      send(fd, reply.c_str(), reply.length(), 0);
+    } else {
+      string reply = "{\n\"low\": \"" + DtoS(low * 1.8 + 32) + "F\", \"high\": \"" + DtoS(high * 1.8 + 32) + "F\", \"avg\": \"" + DtoS(avg * 1.8 + 32) + "F\", \"recent\": \"" + DtoS(recent * 1.8 + 32) + "F\", \"isConnect\": \"" + to_string(isConnect) + "\"\n}\n";
+    
+      send(fd, reply.c_str(), reply.length(), 0);
+    }
     close(fd);
+
+
+    char* res = "r";
+    write(fd_a, res, 10);
+
+
 }
 
 
 
 int start_server(int PORT_NUMBER)     // start the server and listening to requests
 { 
-    /*
-	  temp.push_back(10);
-	  temp.push_back(20);
-	  temp.push_back(10);
-	  temp.push_back(20);
-	  temp.push_back(10);
-	  temp.push_back(20);
-	  temp.push_back(10);
-	  temp.push_back(20);
-	  temp.push_back(10);
-	  temp.push_back(20);
-    temp.push_back(0);
-    temp.push_back(30);
-    temp.push_back(15);
-    temp.push_back(15);
-    temp.push_back(15);
-    */
+    
     
       // structs to represent the server and client
       struct sockaddr_in server_addr,client_addr;    
@@ -342,13 +463,11 @@ int start_server(int PORT_NUMBER)     // start the server and listening to reque
       int bytes_received = recv(fd,request,1024,0);
       // null-terminate the string
       request[bytes_received] = '\0';
-      cout << "Here comes the message:" << endl;
-      cout << request << endl;
+      //cout << "Here comes the message:" << endl;
+      //cout << request << endl;
       
 
       int ret = requestHandler(request);
-
-      cout << "ret is " << ret << endl;
 
       if (ret == 0){
           statsHandler(fd);
