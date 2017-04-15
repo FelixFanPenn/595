@@ -70,6 +70,8 @@ void setup()
 void loop() 
 { 
   String msg = "";
+  bool stop = 0;
+  bool error = 0;
   int Decimal, FDecimal = 0, timeInterval = 1000;
   byte Temperature_H, Temperature_L, FTemperature_H = 0, FTemperature_L = 0, counter, counter2;
   bool IsPositive, FIsPositive = 0, isCel = 0;
@@ -122,21 +124,40 @@ void loop()
     /* Calculate temperature */
     Cal_temp (Decimal, Temperature_H, Temperature_L, IsPositive);
     msg = Serial.readString();
-    if (msg.equals("c")){
+       if (msg.equals("c")){
       isCel = 1;
     }
     else if (msg.equals("f")){
       isCel = 0;
+    }else if(msg.equals("s")){
+      stop = 1;
+    }else if(msg.equals("r")){
+      error = 0;
+      stop = 0;
+      digitalWrite(RED, LOW);
+    } else if(msg.equals("ddd")){
+      continue;
+    } else if(msg.equals("e")){
+      error = 1;
     }
     /* display the temperature with respect to isCel variable*/
-    if (isCel == 1){
-        Dis_7SEG (Decimal, Temperature_H, Temperature_L, IsPositive, 1);
+    
+    if (stop == 0){
+        if (isCel == 1){
+            Dis_7SEG (Decimal, Temperature_H, Temperature_L, IsPositive, 1);
         
-    }else{
-        Fah_temp (FDecimal, FTemperature_H, FIsPositive, Decimal, Temperature_H, IsPositive);
-        Dis_7SEG (FDecimal, FTemperature_H, FTemperature_L, FIsPositive, 0);
+        } else {
+            Fah_temp (FDecimal, FTemperature_H, FIsPositive, Decimal, Temperature_H, IsPositive);
+            Dis_7SEG (FDecimal, FTemperature_H, FTemperature_L, FIsPositive, 0);
+        }
     }
+
+    if (error == 1){
+        sendError();
+    }
+
     SerialMonitorPrint (Temperature_H, Decimal, IsPositive);
+    
     delay (1000);        /* Take temperature read every 1 second */
   }
 } 
@@ -252,6 +273,38 @@ void Dis_7SEG (int Decimal, byte High, byte Low, bool sign, bool isCel)
     Send7SEG (Digit,0x00);    
   }  
 }
+
+/***************************************************************************
+ Function Name: SendERROR
+
+ Purpose: 
+   Display error -1 and light up the red light
+****************************************************************************/
+void sendError(){
+    clearDisplay();
+    //display negative sign
+    Send7SEG(2, 0x40);
+    //display 1
+    Send7SEG(1, NumberLookup[1]);
+    digitalWrite(RED, HIGH);
+}
+
+/***************************************************************************
+ Function Name: clearDisplay
+
+ Purpose: 
+   clear the Display 
+****************************************************************************/
+void clearDisplay(){
+    int Digit = 4;
+    while (Digit > 0){
+        Send7SEG(Digit,0x00); 
+        Digit--;
+    }
+}
+
+
+
 
 /***************************************************************************
  Function Name: Send7SEG
